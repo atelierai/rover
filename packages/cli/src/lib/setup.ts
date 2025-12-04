@@ -197,7 +197,10 @@ export class SetupBuilder {
   /**
    * Generate and save the setup script to the appropriate task directory
    */
-  generateEntrypoint(): string {
+  generateEntrypoint(
+    includeTaskSetup: boolean = true,
+    entrypointFilename: string = 'entrypoint.sh'
+  ): string {
     let recoverPermissions = '';
 
     // For Docker rootless, force it to return the permissions to the right users.
@@ -307,6 +310,59 @@ fi
 `;
     }
 
+    // Generate template variables for task-related sections
+    const validateTaskFileFunction = includeTaskSetup
+      ? `
+# Function to validate task description file
+validate_task_file() {
+    if [ ! -f "/task/description.json" ]; then
+        echo "❌ Task description file not found at /task/description.json"
+        safe_exit 1
+    fi
+}
+`
+      : '';
+
+    const validateTaskFileCall = includeTaskSetup
+      ? `
+# Validate task description file
+validate_task_file`
+      : '';
+
+    const taskDataSection = includeTaskSetup
+      ? `
+# Read task data from mounted JSON file
+TASK_ID=$(jq -r '.id' /task/description.json)
+TASK_ITERATION=$(jq -r '.iteration' /task/description.json)
+TASK_TITLE=$(jq -r '.title' /task/description.json)
+TASK_DESCRIPTION=$(jq -r '.description' /task/description.json)
+
+echo -e "\\n======================================="
+echo "🚀 Rover Task Execution Setup"
+echo "======================================="
+echo "Task Title: $TASK_TITLE"
+echo "Task ID: $TASK_ID"
+echo "Task Iteration: $TASK_ITERATION"
+echo "======================================="
+`
+      : '';
+
+    const exportTaskVariables = includeTaskSetup
+      ? `
+# Export variables for agent execution
+export TASK_ID TASK_TITLE TASK_DESCRIPTION
+`
+      : '';
+
+    const workflowExecutionSection = includeTaskSetup
+      ? `
+# Execute the complete task workflow
+echo -e "\\n======================================="
+echo "🚀 Running Workflow"
+echo "======================================="
+`
+      : '';
+
     // Generate script content
     const scriptContent = pupa(entrypointScript, {
       agent: this.agent,
@@ -314,10 +370,15 @@ fi
       recoverPermissions,
       installAllPackages,
       initScriptExecution,
+      validateTaskFileFunction,
+      validateTaskFileCall,
+      taskDataSection,
+      exportTaskVariables,
+      workflowExecutionSection,
     });
 
     // Write script to file
-    const scriptPath = join(this.taskDir, 'entrypoint.sh');
+    const scriptPath = join(this.taskDir, entrypointFilename);
     writeFileSync(scriptPath, scriptContent.replace(/\r\n/g, '\n'), 'utf8');
 
     // Make script executable
