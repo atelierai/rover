@@ -8,6 +8,7 @@ export const setVerbose = (verbose: boolean) => {
 export {
   findProjectRoot,
   clearProjectRootCache,
+  safeGetCwd,
   launch,
   launchSync,
   type Options,

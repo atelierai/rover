@@ -303,6 +303,27 @@ rover logs -f 123
 rover inspect 123
 ```
 
+### 查看实时 Daemon 状态
+
+`rover manual status` 命令现在可以从容器的 daemon 获取实时状态：
+
+```bash
+# 显示实时状态，包括：
+# - 容器运行状态
+# - 当前 daemon 状态（waiting/running）
+# - 迭代次数
+# - 最后活动时间
+# - 任何错误信息
+rover manual status 123
+
+# 包含容器中的对话历史
+rover manual status 123 --show-history
+```
+
+### 空闲超时
+
+Manual 模式容器在 30 分钟无活动后会自动关闭以节约资源。这个超时时间可以在启动 daemon 时配置。
+
 ### 查看 JSONL 文件
 
 Manual 模式的完整对话历史保存在 JSONL 文件中：
@@ -434,10 +455,64 @@ A: 是的，所有的交互都会自动保存到 JSONL 文件中。
 
 A: 是的，创建任务后 CLI Controller 会立即将 task description 发送给 AI Agent 开始执行。
 
+## 内部架构
+
+对于开发者和高级用户，以下是 Manual 模式的内部工作原理：
+
+### Daemon 架构
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        宿主机系统                                    │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                     Rover CLI                                │   │
+│  │  rover manual send → sendToDaemon() → 写入 FIFO 管道        │   │
+│  │  rover manual stop → stopManualDaemon() → 写入 "stop"       │   │
+│  │  rover manual status → getDaemonStatus() → 读取 status.json │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              │                                       │
+│                     Docker exec / FIFO                               │
+│                              │                                       │
+│  ┌───────────────────────────▼─────────────────────────────────┐   │
+│  │                   Docker 容器                                │   │
+│  │  ┌──────────────────────────────────────────────────────┐   │   │
+│  │  │               rover-agent daemon                      │   │   │
+│  │  │  • 监听 /tmp/rover-input.fifo                        │   │   │
+│  │  │  • 接收命令: message, stop, status                   │   │   │
+│  │  │  • 调用 AI agent（claude, gemini 等）                │   │   │
+│  │  │  • 写入会话记录到 /rover/session.jsonl               │   │   │
+│  │  │  • 更新状态到 /rover/status.json                     │   │   │
+│  │  │  • 30 分钟空闲后自动关闭                             │   │   │
+│  │  └──────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 消息流程
+
+1. **用户执行**: `rover manual send 123 "修复这个bug"`
+2. **CLI**: 验证任务，检查容器是否运行
+3. **CLI**: 将消息写入容器内的 FIFO 管道
+4. **Daemon**: 从 FIFO 接收消息
+5. **Daemon**: 更新 status.json 为 "running"
+6. **Daemon**: 调用 AI agent 处理消息
+7. **Daemon**: 记录交互到 session.jsonl
+8. **Daemon**: 更新 status.json 为 "waiting"
+9. **CLI**: 将输出流式返回给用户
+
+### 容器内的关键文件
+
+| 文件 | 用途 |
+|------|------|
+| `/tmp/rover-input.fifo` | 用于接收命令的 FIFO 管道 |
+| `/rover/session.jsonl` | JSONL 格式的会话历史 |
+| `/rover/status.json` | 当前 daemon 状态 |
+| `/rover/.daemon-ready` | 表示 daemon 已就绪的标记文件 |
+
 ## 下一步
 
-- 了解 [Manual 模式实现原理](../manual-mode-implementation-plan-zh.md)
-- 查看 [完整的命令参考](../../cli-guidelines.md)
-- 探索 [工作流系统](../../../README.md#workflows)
+- 了解 [Manual 模式实现原理](../dev/manual-mode-implementation-plan-zh.md)
+- 查看 [完整的命令参考](../cli-guidelines.md)
+- 探索 [工作流系统](../../README.md#workflows)
 
 ````

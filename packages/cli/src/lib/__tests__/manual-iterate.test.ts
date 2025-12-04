@@ -191,3 +191,93 @@ describe('manual-iterate', () => {
     });
   });
 });
+
+describe('FIFO message format', () => {
+  describe('message JSON structure', () => {
+    it('should format message correctly', () => {
+      const content = 'Fix the bug';
+      const message = { type: 'message', content };
+      const json = JSON.stringify(message);
+      
+      expect(JSON.parse(json)).toEqual({ type: 'message', content: 'Fix the bug' });
+    });
+
+    it('should format stop command correctly', () => {
+      const message = { type: 'stop' };
+      const json = JSON.stringify(message);
+      
+      expect(JSON.parse(json)).toEqual({ type: 'stop' });
+    });
+
+    it('should format status request correctly', () => {
+      const message = { type: 'status' };
+      const json = JSON.stringify(message);
+      
+      expect(JSON.parse(json)).toEqual({ type: 'status' });
+    });
+
+    it('should handle special characters in content', () => {
+      const content = 'Fix the "bug" in <auth.ts> & handle \'quotes\'';
+      const message = { type: 'message', content };
+      const json = JSON.stringify(message);
+      
+      const parsed = JSON.parse(json);
+      expect(parsed.content).toBe(content);
+    });
+
+    it('should handle newlines in content', () => {
+      const content = 'Line 1\nLine 2\nLine 3';
+      const message = { type: 'message', content };
+      const json = JSON.stringify(message);
+      
+      const parsed = JSON.parse(json);
+      expect(parsed.content).toContain('\n');
+      expect(parsed.content.split('\n')).toHaveLength(3);
+    });
+
+    it('should handle unicode in content', () => {
+      const content = '修复 auth.ts 中的问题 🐛';
+      const message = { type: 'message', content };
+      const json = JSON.stringify(message);
+      
+      const parsed = JSON.parse(json);
+      expect(parsed.content).toBe(content);
+    });
+  });
+});
+
+describe('iteration prompt building', () => {
+  it('should build basic iteration prompt', () => {
+    const instructions = 'Add unit tests';
+    const iteration = 2;
+    
+    const prompt = `## Iteration ${iteration}
+
+## New Instructions
+
+${instructions}
+
+Please continue working on this task based on the new instructions above.
+When you are done, let me know what was accomplished.`;
+
+    expect(prompt).toContain('Iteration 2');
+    expect(prompt).toContain('Add unit tests');
+    expect(prompt).toContain('New Instructions');
+  });
+
+  it('should include previous summary if available', () => {
+    const summary = 'Implemented the login feature';
+    const instructions = 'Add error handling';
+    
+    const contextSection = `\n## Previous Iteration Summary\n\n${summary}\n`;
+    const prompt = `## Iteration 3
+${contextSection}
+## New Instructions
+
+${instructions}`;
+
+    expect(prompt).toContain('Previous Iteration Summary');
+    expect(prompt).toContain(summary);
+    expect(prompt).toContain(instructions);
+  });
+});

@@ -5,13 +5,14 @@
  */
 
 import colors from 'ansi-colors';
-import { launch } from 'rover-common';
+import { launch, ProcessManager } from 'rover-common';
 import { TaskDescriptionManager, TaskNotFoundError } from 'rover-schemas';
 import {
   hasActiveManual,
   loadManualState,
   saveManualState,
 } from '../../lib/sandbox/manual-mode.js';
+import { stopManualDaemon } from '../../lib/manual-iterate.js';
 import { exitWithError, exitWithSuccess } from '../../utils/exit.js';
 import { isJsonMode } from '../../lib/global-state.js';
 import { getTelemetry } from '../../lib/telemetry.js';
@@ -134,8 +135,26 @@ export const stopCommand = async (
   }
 
   try {
-    // Stop the container if it exists and is running
+    // First, try to gracefully stop the daemon via FIFO
     if (manualState.containerId) {
+      if (!isJsonMode()) {
+        console.log(
+          colors.gray('Sending stop signal to daemon...')
+        );
+      }
+
+      // Try to stop daemon gracefully first
+      const daemonStopResult = await stopManualDaemon(task);
+      
+      if (!daemonStopResult.success && !isJsonMode()) {
+        console.log(
+          colors.yellow(
+            `Note: ${daemonStopResult.error || 'Could not signal daemon'}`
+          )
+        );
+      }
+
+      // Now stop the container
       if (!isJsonMode()) {
         console.log(
           colors.gray('Stopping container ') +
@@ -151,13 +170,13 @@ export const stopCommand = async (
           '-f',
           '{{.State.Running}}',
           manualState.containerId,
-        ]);
+        ], { reject: false });
 
-        const isRunning = inspectResult.stdout?.toString().trim() === 'true';
+        const isRunning = inspectResult.stdout?.trim() === 'true';
 
         if (isRunning) {
-          // Send stop signal to the container
-          await launch('docker', ['stop', manualState.containerId]);
+          // Stop the container
+          await launch('docker', ['stop', manualState.containerId], { reject: false });
         }
 
         // Remove container if requested
@@ -166,7 +185,7 @@ export const stopCommand = async (
             console.log(colors.gray('Removing container...'));
           }
 
-          await launch('docker', ['rm', manualState.containerId]);
+          await launch('docker', ['rm', manualState.containerId], { reject: false });
           result.containerRemoved = true;
         }
       } catch (error) {

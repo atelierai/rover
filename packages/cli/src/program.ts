@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { ProjectConfigManager, UserSettingsManager } from 'rover-schemas';
-import { AI_AGENT } from 'rover-common';
+import { AI_AGENT, safeGetCwd } from 'rover-common';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
 import { exitWithError } from './utils/exit.js';
@@ -162,7 +162,7 @@ export function createProgram(
         if (['init', 'task'].includes(commandName)) {
           showSplashHeader();
         } else if (commandName !== 'mcp') {
-          showRegularHeader(version, process.cwd());
+          showRegularHeader(version, safeGetCwd());
         }
       });
   }
@@ -185,7 +185,7 @@ export function createProgram(
     .command('init')
     .description('Initialize your project')
     .option('-y, --yes', 'Skip all confirmations and run non-interactively')
-    .argument('[path]', 'Project path', process.cwd())
+    .argument('[path]', 'Project path', safeGetCwd())
     .action(initCommand);
 
   program.commandsGroup(colors.cyan('Create and manage tasks:'));
@@ -340,31 +340,36 @@ export function createProgram(
 
   program.commandsGroup(colors.cyan('Manual mode (interactive CLI sessions):'));
 
-  program
-    .command('manual send')
+  // Create manual parent command first to avoid duplicate registration
+  const manualCommand = program
+    .command('manual')
+    .description('Manual mode commands for interactive CLI sessions');
+
+  manualCommand
+    .command('send')
     .description('Send a message to an active manual mode task')
     .argument('<taskId>', 'Task ID')
     .argument('[message]', 'Message to send (or provide via stdin)')
     .option('--json', 'Output in JSON format')
     .action(manualSendCommand);
 
-  program
-    .command('manual list')
+  manualCommand
+    .command('list')
     .description('List all manual mode tasks')
     .option('--json', 'Output in JSON format')
     .option('--all', 'Show all tasks including completed and failed')
     .action(manualListCommand);
 
-  program
-    .command('manual status')
+  manualCommand
+    .command('status')
     .description('Show detailed status of a manual mode task')
     .argument('<taskId>', 'Task ID')
     .option('--json', 'Output in JSON format')
     .option('--show-history', 'Show complete conversation history')
     .action(manualStatusCommand);
 
-  program
-    .command('manual stop')
+  manualCommand
+    .command('stop')
     .description('Stop an active manual mode task')
     .argument('<taskId>', 'Task ID')
     .option('--force', 'Force stop even if task is active')

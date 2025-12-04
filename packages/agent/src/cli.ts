@@ -10,6 +10,7 @@ import {
 } from './commands/install.js';
 import { addConfigCommands } from './commands/config/index.js';
 import { sessionCommand } from './commands/session.js';
+import { daemonCommand } from './commands/daemon.js';
 import { getAgentVersion } from './version.js';
 
 // Common types
@@ -97,6 +98,35 @@ program
     []
   )
   .action(sessionCommand);
+
+// Daemon mode for manual/interactive sessions
+program
+  .command('daemon')
+  .description(
+    'Start a daemon process that listens for messages via FIFO pipe (used by manual mode)'
+  )
+  .argument('<agent>', 'AI Coding Agent to use', value => {
+    if (!Object.values(AI_AGENT).includes(value as AI_AGENT)) {
+      throw new Error(
+        `Invalid agent '${value}'. Valid agents are: ${Object.values(AI_AGENT).join(', ')}`
+      );
+    }
+    return value as AI_AGENT;
+  })
+  .requiredOption('--task-id <id>', 'Task ID for status tracking')
+  .option('--jsonl-path <path>', 'Path to JSONL log file')
+  .option(
+    '--idle-timeout <seconds>',
+    'Idle timeout in seconds before auto-shutdown (default: 1800 = 30 minutes)',
+    (value) => parseInt(value, 10)
+  )
+  .option(
+    '--pre-context-file <path>',
+    'Path to JSON file containing pre-context data',
+    collect,
+    []
+  )
+  .action(daemonCommand);
 
 // Install workflow dependencies
 program

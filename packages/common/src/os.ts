@@ -4,6 +4,7 @@ import type { Options, Result, SyncOptions, SyncResult } from 'execa';
 export type { Options, Result, SyncOptions, SyncResult };
 
 import colors from 'ansi-colors';
+import { homedir } from 'os';
 import { Git } from './git.js';
 
 import { VERBOSE } from './index.js';
@@ -20,6 +21,27 @@ export type LaunchSyncOptions = SyncOptions & {
 let projectRootCache: string | null = null;
 
 /**
+ * Safely get the current working directory.
+ * Falls back to home directory if the current directory doesn't exist
+ * (e.g., when it was deleted while the shell was in it).
+ */
+export function safeGetCwd(): string {
+  try {
+    return process.cwd();
+  } catch (error) {
+    // If the current directory doesn't exist, fall back to home directory
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    ) {
+      return homedir();
+    }
+    throw error;
+  }
+}
+
+/**
  * Find the Git repository root directory. Falls back to current working directory
  * if not in a Git repository. Result is cached for the process lifetime to avoid
  * redundant Git subprocess calls.
@@ -30,7 +52,7 @@ export function findProjectRoot(): string {
   }
 
   const git = new Git();
-  projectRootCache = git.getRepositoryRoot() || process.cwd();
+  projectRootCache = git.getRepositoryRoot() || safeGetCwd();
   return projectRootCache;
 }
 

@@ -303,6 +303,27 @@ Use `rover inspect` to view complete task information:
 rover inspect 123
 ```
 
+### View Live Daemon Status
+
+The `rover manual status` command now fetches real-time status from the container's daemon:
+
+```bash
+# Shows live status including:
+# - Container running state
+# - Current daemon status (waiting/running)
+# - Iteration count
+# - Last activity time
+# - Any errors
+rover manual status 123
+
+# Include conversation history from container
+rover manual status 123 --show-history
+```
+
+### Idle Timeout
+
+Manual mode containers automatically shut down after 30 minutes of inactivity to conserve resources. This timeout can be configured when starting the daemon.
+
 ### View JSONL Files
 
 The complete conversation history for Manual mode is saved in JSONL files:
@@ -433,6 +454,60 @@ A: Yes, all interactions are automatically saved to JSONL files.
 **Q: Does a Manual mode task start executing immediately after creation?**
 
 A: Yes, after creating the task, the CLI Controller immediately sends the task description to the AI Agent to start execution.
+
+## Internal Architecture
+
+For developers and advanced users, here's how Manual mode works internally:
+
+### Daemon Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Host System                                   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                     Rover CLI                                │   │
+│  │  rover manual send → sendToDaemon() → FIFO pipe write       │   │
+│  │  rover manual stop → stopManualDaemon() → writes "stop"     │   │
+│  │  rover manual status → getDaemonStatus() → reads status.json│   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              │                                       │
+│                     Docker exec / FIFO                               │
+│                              │                                       │
+│  ┌───────────────────────────▼─────────────────────────────────┐   │
+│  │                   Docker Container                           │   │
+│  │  ┌──────────────────────────────────────────────────────┐   │   │
+│  │  │               rover-agent daemon                      │   │   │
+│  │  │  • Listens on /tmp/rover-input.fifo                  │   │   │
+│  │  │  • Receives: message, stop, status commands          │   │   │
+│  │  │  • Invokes AI agent (claude, gemini, etc.)           │   │   │
+│  │  │  • Writes session to /rover/session.jsonl            │   │   │
+│  │  │  • Updates status in /rover/status.json              │   │   │
+│  │  │  • Auto-shutdown after 30 min idle                   │   │   │
+│  │  └──────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Message Flow
+
+1. **User runs**: `rover manual send 123 "fix the bug"`
+2. **CLI**: Validates task, checks container is running
+3. **CLI**: Writes message to FIFO pipe inside container
+4. **Daemon**: Receives message from FIFO
+5. **Daemon**: Updates status.json to "running"
+6. **Daemon**: Invokes AI agent with message
+7. **Daemon**: Logs interaction to session.jsonl
+8. **Daemon**: Updates status.json to "waiting"
+9. **CLI**: Streams output back to user
+
+### Key Files Inside Container
+
+| File | Purpose |
+|------|---------|
+| `/tmp/rover-input.fifo` | FIFO pipe for receiving commands |
+| `/rover/session.jsonl` | Session history in JSONL format |
+| `/rover/status.json` | Current daemon status |
+| `/rover/.daemon-ready` | Marker file indicating daemon is ready |
 
 ## Next Steps
 

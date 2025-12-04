@@ -10,9 +10,19 @@ export enum NewTaskProvider {
   GITHUB = 'github',
 }
 
-// Config is injected at build time via tsdown define
-declare const __BUILD_CONFIG__: { apiKey: string; host: string };
-const config = __BUILD_CONFIG__;
+// Config based on environment
+const prodConfig = {
+  apiKey: 'phc_PaRcEsRKkwITcZO0wvq9PrwRCFWM215zRwBCMmAdhS7',
+  host: 'https://eu.i.posthog.com',
+};
+
+const devConfig = {
+  apiKey: 'phc_tmy7HDRkmsVRlmzWp1kk21i2GLmlp1AEoJeXcwnHks2',
+  host: 'https://eu.i.posthog.com',
+};
+
+// Use dev config when ROVER_DEV is set, otherwise use prod
+const config = process.env.ROVER_DEV === 'true' ? devConfig : prodConfig;
 
 // Constants
 const CONFIG_DIR = join(homedir(), '.config', 'rover');

@@ -20,7 +20,7 @@
     "start": "node dist/cli.js",
     "clean": "rm -rf dist",
     "check": "tsc --noEmit",
-    "test": "echo 'no testing yet'",
+    "test": "vitest run",
     "test:watch": "vitest watch",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage"
@@ -32,6 +32,7 @@
     "commander": "^14.0.0",
     "execa": "^9.6.0",
     "ora": "^8.2.0",
+    "rover-common": "^1.0.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
