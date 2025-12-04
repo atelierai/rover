@@ -199,6 +199,7 @@ interface TaskOptions {
   agent?: string[];
   json?: boolean;
   debug?: boolean;
+  manual?: boolean;
 }
 
 /**
@@ -327,7 +328,13 @@ const createTaskForAgent = async (
   // Start sandbox container for task execution
   try {
     const sandbox = await createSandbox(task, processManager);
-    const containerId = await sandbox.createAndStart();
+    
+    // Use manual mode if --manual flag is set
+    const sandboxOptions = options.manual
+      ? { mode: 'manual' as const, initialPrompt: description }
+      : undefined;
+    
+    const containerId = await sandbox.createAndStart(sandboxOptions);
 
     updateTaskMetadata(
       task.id,
@@ -339,7 +346,8 @@ const createTaskForAgent = async (
       jsonMode
     );
 
-    processManager?.addItem('Task started in background');
+    const modeLabel = options.manual ? 'Manual mode session' : 'Task';
+    processManager?.addItem(`${modeLabel} started in background`);
     processManager?.completeLastItem();
     processManager?.finish();
   } catch (_err) {
@@ -384,7 +392,7 @@ export const taskCommand = async (
 ) => {
   const telemetry = getTelemetry();
   // Extract options
-  const { yes, json, fromGithub, debug, sourceBranch, targetBranch, agent } =
+  const { yes, json, fromGithub, debug, sourceBranch, targetBranch, agent, manual } =
     options;
 
   // Set global JSON mode for tests and backwards compatibility
@@ -392,7 +400,8 @@ export const taskCommand = async (
     setJsonMode(json);
   }
 
-  const workflowName = options.workflow || DEFAULT_WORKFLOW;
+  // Manual mode doesn't use workflows
+  const workflowName = manual ? 'manual' : (options.workflow || DEFAULT_WORKFLOW);
 
   const jsonOutput: TaskTaskOutput = {
     success: false,
@@ -465,43 +474,46 @@ export const taskCommand = async (
     }
   }
 
-  // Load the workflow
-  let workflow: WorkflowManager;
+  // Load the workflow (skip for manual mode)
+  let workflow: WorkflowManager | null = null;
 
-  try {
-    const workflowStore = initWorkflowStore();
-    const loadedWorkflow = workflowStore.getWorkflow(workflowName);
+  if (!manual) {
+    try {
+      const workflowStore = initWorkflowStore();
+      const loadedWorkflow = workflowStore.getWorkflow(workflowName);
 
-    if (loadedWorkflow) {
-      workflow = loadedWorkflow;
-    } else {
-      jsonOutput.error = `Could no load the '${workflowName}' workflow`;
+      if (loadedWorkflow) {
+        workflow = loadedWorkflow;
+      } else {
+        jsonOutput.error = `Could no load the '${workflowName}' workflow`;
+        await exitWithError(jsonOutput, { telemetry });
+        return;
+      }
+    } catch (err) {
+      jsonOutput.error = `There was an error loading the '${workflowName}' workflow: ${err}`;
       await exitWithError(jsonOutput, { telemetry });
       return;
     }
-  } catch (err) {
-    jsonOutput.error = `There was an error loading the '${workflowName}' workflow: ${err}`;
-    await exitWithError(jsonOutput, { telemetry });
-    return;
-  }
 
-  if (workflow == null) {
-    jsonOutput.error = `The workflow ${workflow} does not exist`;
-    await exitWithError(jsonOutput, { telemetry });
-    return;
+    if (workflow == null) {
+      jsonOutput.error = `The workflow ${workflow} does not exist`;
+      await exitWithError(jsonOutput, { telemetry });
+      return;
+    }
   }
 
   // Many workflows require instructions and this is the default input we collect
   // from the CLI. We might revisit it in the future when we have more workflows.
   let description = initPrompt?.trim() || '';
 
-  // Workflow inputs' data
-  const inputs = workflow.inputs;
-  const requiredInputs = (inputs || [])
-    .filter(el => el.required)
-    .map(el => el.name);
-  const descriptionOnlyWorkflow =
-    requiredInputs.length === 1 && requiredInputs[0] === 'description';
+  // Workflow inputs' data - simplified for manual mode
+  // For manual mode, we only need description - the rest is handled by CLI Controller
+  const inputs = workflow?.inputs || [];
+  const requiredInputs = manual
+    ? ['description']
+    : (inputs || []).filter(el => el.required).map(el => el.name);
+  const descriptionOnlyWorkflow = manual ||
+    (requiredInputs.length === 1 && requiredInputs[0] === 'description');
   const inputsData: Map<string, string> = new Map();
 
   // Validate branch option and check for uncommitted changes
@@ -544,8 +556,13 @@ export const taskCommand = async (
   if (!json) {
     const props: Record<string, string> = {
       ['Source Branch']: baseBranch!,
-      ['Workflow']: workflowName,
     };
+
+    if (manual) {
+      props['Mode'] = 'Manual (CLI Controller)';
+    } else {
+      props['Workflow'] = workflowName;
+    }
 
     if (description.length > 0) {
       props['Description'] = description!;
@@ -556,7 +573,8 @@ export const taskCommand = async (
 
   // We need to process the workflow inputs. We will ask users to provide this
   // information or load it as a JSON from the stdin.
-  if (inputs && inputs.length > 0) {
+  // For manual mode, we only need the description.
+  if (manual || (inputs && inputs.length > 0)) {
     if (stdinIsAvailable()) {
       const stdinInput = await readFromStdin();
       if (stdinInput) {
@@ -694,35 +712,38 @@ export const taskCommand = async (
       }
 
       // Build the questions and pass them to enquirer
-      for (const key in inputs) {
-        const input = inputs[key];
+      // Skip additional workflow inputs in manual mode
+      if (!manual) {
+        for (const key in inputs) {
+          const input = inputs[key];
 
-        // We are already asking of providing it.
-        if (input.name == 'description') {
-          continue;
+          // We are already asking of providing it.
+          if (input.name == 'description') {
+            continue;
+          }
+
+          let enquirerType;
+          switch (input.type) {
+            case 'string':
+            case 'number':
+              enquirerType = 'input';
+              break;
+            case 'boolean':
+              enquirerType = 'confirm';
+              break;
+            default:
+              enquirerType = 'input';
+              break;
+          }
+
+          const question = {
+            type: enquirerType,
+            name: input.name,
+            message: input.label || input.description,
+          };
+
+          questions.push(question);
         }
-
-        let enquirerType;
-        switch (input.type) {
-          case 'string':
-          case 'number':
-            enquirerType = 'input';
-            break;
-          case 'boolean':
-            enquirerType = 'confirm';
-            break;
-          default:
-            enquirerType = 'input';
-            break;
-        }
-
-        const question = {
-          type: enquirerType,
-          name: input.name,
-          message: input.label || input.description,
-        };
-
-        questions.push(question);
       }
 
       if (questions.length > 0) {
@@ -861,15 +882,34 @@ export const taskCommand = async (
     const tips: string[] = [];
 
     if (createdTasks.length === 1) {
-      successMessage = 'Task was created successfully';
-      tips.push(
-        'Use ' + colors.cyan('rover list') + ' to check the list of tasks'
-      );
-      tips.push(
-        'Use ' +
-          colors.cyan(`rover logs -f ${firstTask.taskId}`) +
-          ' to watch the task logs'
-      );
+      if (manual) {
+        successMessage = 'Manual mode session started successfully';
+        tips.push(
+          'Use ' +
+            colors.cyan(`rover manual send ${firstTask.taskId} "message"`) +
+            ' to send instructions'
+        );
+        tips.push(
+          'Use ' +
+            colors.cyan(`rover manual status ${firstTask.taskId}`) +
+            ' to check session status'
+        );
+        tips.push(
+          'Use ' +
+            colors.cyan(`rover logs -f ${firstTask.taskId}`) +
+            ' to watch the session logs'
+        );
+      } else {
+        successMessage = 'Task was created successfully';
+        tips.push(
+          'Use ' + colors.cyan('rover list') + ' to check the list of tasks'
+        );
+        tips.push(
+          'Use ' +
+            colors.cyan(`rover logs -f ${firstTask.taskId}`) +
+            ' to watch the task logs'
+        );
+      }
     } else {
       const taskIds = createdTasks.map(t => t.taskId).join(', ');
       successMessage = `Created ${createdTasks.length} tasks (IDs: ${taskIds})`;

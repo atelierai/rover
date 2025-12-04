@@ -26,6 +26,13 @@ import {
   warnIfCustomImage,
 } from './container-common.js';
 import { isJsonMode } from '../global-state.js';
+import { generateControllerEntrypoint } from './manual-entrypoint.js';
+import {
+  ManualModeConfig,
+  getDefaultManualModeConfig,
+  createManualState,
+  saveManualState,
+} from './manual-mode.js';
 import colors from 'ansi-colors';
 
 export class PodmanSandbox extends Sandbox {
@@ -45,6 +52,162 @@ export class PodmanSandbox extends Sandbox {
   }
 
   protected async create(): Promise<string> {
+    // Route to appropriate creation method based on mode
+    if (this.mode === 'manual') {
+      return this.createManualMode();
+    }
+    return this.createWorkflowMode();
+  }
+
+  /**
+   * Create container for Manual Mode (CLI Controller)
+   */
+  protected async createManualMode(): Promise<string> {
+    const roverPath = join(findProjectRoot(), '.rover');
+    const tasksPath = join(roverPath, 'tasks');
+    const taskPath = join(tasksPath, this.task.id.toString());
+    const worktreePath = join(taskPath, 'workspace');
+    const iterationPath = join(
+      taskPath,
+      'iterations',
+      this.task.iterations.toString()
+    );
+
+    // Load project config
+    const projectRoot = findProjectRoot();
+    let projectConfig: ProjectConfigManager | undefined;
+    let customEnvVariables: string[] = [];
+
+    if (ProjectConfigManager.exists()) {
+      try {
+        projectConfig = ProjectConfigManager.load();
+        if (projectConfig.envs && projectConfig.envs.length > 0) {
+          customEnvVariables = parseCustomEnvironmentVariables(
+            projectConfig.envs
+          );
+        }
+        if (projectConfig.envsFile) {
+          const fileEnvVariables = loadEnvsFile(
+            projectConfig.envsFile,
+            projectRoot
+          );
+          customEnvVariables = [...customEnvVariables, ...fileEnvVariables];
+        }
+      } catch (error) {
+        // Silently skip
+      }
+    }
+
+    // Get agent-specific mounts and env
+    const agent = getAIAgentTool(this.task.agent!);
+    const containerMounts: string[] = agent.getContainerMounts();
+    const envVariables: string[] = agent.getEnvironmentVariables();
+    const allEnvVariables = [...envVariables, ...customEnvVariables];
+
+    // Generate manual mode config
+    const manualConfig: ManualModeConfig = {
+      ...getDefaultManualModeConfig(),
+      enabled: true,
+      sessionId: this.startOptions?.sessionId,
+    };
+
+    // Generate controller entrypoint
+    const entrypointScriptPath = generateControllerEntrypoint(
+      this.task,
+      this.task.agent!,
+      projectConfig || ProjectConfigManager.load(),
+      manualConfig
+    );
+
+    // Create manual state
+    const manualState = createManualState(
+      this.task,
+      this.task.agent!,
+      manualConfig.sessionId
+    );
+    manualState.containerId = this.sandboxName;
+    saveManualState(this.task, manualState);
+
+    // Clean up existing container
+    try {
+      await launch('podman', ['rm', '-f', this.sandboxName]);
+    } catch (error) {
+      // Container doesn't exist
+    }
+
+    const podmanArgs = ['create', '--name', this.sandboxName];
+
+    const userInfo_ = userInfo();
+
+    const agentImage = resolveAgentImage(projectConfig);
+    warnIfCustomImage(projectConfig);
+
+    const userCredentialsTempPath = mkdtempSync(join(tmpdir(), 'rover-'));
+    const etcPasswd = join(userCredentialsTempPath, 'passwd');
+    const [etcPasswdContents] = await etcPasswdWithUserInfo(
+      ContainerBackend.Podman,
+      agentImage,
+      userInfo_
+    );
+    writeFileSync(etcPasswd, etcPasswdContents);
+
+    const etcGroup = join(userCredentialsTempPath, 'group');
+    const [etcGroupContents] = await etcGroupWithUserInfo(
+      ContainerBackend.Podman,
+      agentImage,
+      userInfo_
+    );
+    writeFileSync(etcGroup, etcGroupContents);
+
+    podmanArgs.push(
+      '-v',
+      `${etcPasswd}:/etc/passwd:Z,ro`,
+      '-v',
+      `${etcGroup}:/etc/group:Z,ro`,
+      '--user',
+      `${userInfo_.uid}:${userInfo_.gid}`,
+      '-v',
+      `${worktreePath}:/workspace:Z,rw`,
+      '-v',
+      `${iterationPath}:/output:Z,rw`,
+      ...containerMounts,
+      '-v',
+      `${entrypointScriptPath}:/entrypoint.sh:Z,ro`
+    );
+
+    // Mount initScript if provided
+    if (projectConfig?.initScript) {
+      const initScriptAbsPath = join(projectRoot, projectConfig.initScript);
+      if (existsSync(initScriptAbsPath)) {
+        podmanArgs.push('-v', `${initScriptAbsPath}:/init-script.sh:Z,ro`);
+      } else if (!isJsonMode()) {
+        console.log(
+          colors.yellow(
+            `⚠ Warning: initScript '${projectConfig.initScript}' does not exist`
+          )
+        );
+      }
+    }
+
+    podmanArgs.push(
+      ...allEnvVariables,
+      '-w',
+      '/workspace',
+      '--entrypoint',
+      '/entrypoint.sh',
+      agentImage
+    );
+
+    return (
+      (await launch('podman', podmanArgs)).stdout?.toString().trim() ||
+      this.sandboxName
+    );
+  }
+
+  /**
+   * Create container for Workflow Mode (SWE automated workflow)
+   */
+  protected async createWorkflowMode(): Promise<string> {
     // Load task description
     const roverPath = join(findProjectRoot(), '.rover');
     const tasksPath = join(roverPath, 'tasks');

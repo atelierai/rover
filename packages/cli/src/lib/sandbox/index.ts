@@ -2,6 +2,13 @@ export * from './types.js';
 export { DockerSandbox } from './docker.js';
 export { PodmanSandbox } from './podman.js';
 
+// Manual mode exports
+export * from './manual-mode.js';
+export {
+  generateManualEntrypoint,
+  generateControllerEntrypoint,
+} from './manual-entrypoint.js';
+
 import { DockerSandbox } from './docker.js';
 import { PodmanSandbox } from './podman.js';
 import { Sandbox } from './types.js';

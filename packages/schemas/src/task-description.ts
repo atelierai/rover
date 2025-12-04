@@ -543,6 +543,22 @@ export class TaskDescriptionManager {
   }
 
   // Other helpers
+
+  /**
+   * Get the task directory path
+   */
+  taskPath(): string {
+    return join(
+      findProjectRoot(),
+      '.rover',
+      'tasks',
+      this.taskId.toString()
+    );
+  }
+
+  /**
+   * Get the iterations directory path
+   */
   iterationsPath(): string {
     return join(
       findProjectRoot(),

@@ -14,10 +14,16 @@ import { resetCommand } from './commands/reset.js';
 import { restartCommand } from './commands/restart.js';
 import { deleteCommand } from './commands/delete.js';
 import { mergeCommand } from './commands/merge.js';
-import colors from 'ansi-colors';
 import { pushCommand } from './commands/push.js';
 import { stopCommand } from './commands/stop.js';
 import { mcpCommand } from './commands/mcp.js';
+import {
+  manualSendCommand,
+  manualListCommand,
+  manualStatusCommand,
+  manualStopCommand,
+} from './commands/manual/index.js';
+import colors from 'ansi-colors';
 import { showTips, TIP_TITLES } from './utils/display.js';
 import {
   Git,
@@ -217,6 +223,10 @@ export function createProgram(
     )
     .option('--json', 'Output the result in JSON format')
     .option('--debug', 'Show debug information like running commands')
+    .option(
+      '--manual',
+      'Start in manual mode with interactive CLI session instead of automated workflow'
+    )
     .argument(
       '[description]',
       'The task description, or provide it later. Mandatory in non-interactive environments'
@@ -312,10 +322,6 @@ export function createProgram(
       '[instructions]',
       'New requirements or refinement instructions to apply (will prompt if not provided)'
     )
-    // .option(
-    //   '-i, --interactive',
-    //   'Open an interactive command session to iterate on the task'
-    // )
     .option('--json', 'Output JSON and skip confirmation prompts')
     .action(iterateCommand);
 
@@ -327,6 +333,40 @@ export function createProgram(
     .argument('<taskId>', 'Task ID to open shell for')
     .option('-c, --container', 'Start the interactive shell within a container')
     .action(shellCommand);
+
+  program.commandsGroup(colors.cyan('Manual mode (interactive CLI sessions):'));
+
+  program
+    .command('manual send')
+    .description('Send a message to an active manual mode task')
+    .argument('<taskId>', 'Task ID')
+    .argument('[message]', 'Message to send (or provide via stdin)')
+    .option('--json', 'Output in JSON format')
+    .action(manualSendCommand);
+
+  program
+    .command('manual list')
+    .description('List all manual mode tasks')
+    .option('--json', 'Output in JSON format')
+    .option('--all', 'Show all tasks including completed and failed')
+    .action(manualListCommand);
+
+  program
+    .command('manual status')
+    .description('Show detailed status of a manual mode task')
+    .argument('<taskId>', 'Task ID')
+    .option('--json', 'Output in JSON format')
+    .option('--show-history', 'Show complete conversation history')
+    .action(manualStatusCommand);
+
+  program
+    .command('manual stop')
+    .description('Stop an active manual mode task')
+    .argument('<taskId>', 'Task ID')
+    .option('--force', 'Force stop even if task is active')
+    .option('--remove-container', 'Remove the container after stopping')
+    .option('--json', 'Output in JSON format')
+    .action(manualStopCommand);
 
   program.commandsGroup(colors.cyan('Merge changes:'));
 

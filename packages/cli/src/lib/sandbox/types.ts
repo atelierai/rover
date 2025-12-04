@@ -9,15 +9,42 @@ export abstract class SandboxPackage {
   abstract initScript(): string;
 }
 
+/**
+ * Sandbox execution mode
+ * - workflow: Run automated SWE workflow (default)
+ * - manual: Run CLI Controller for interactive session
+ */
+export type SandboxMode = 'workflow' | 'manual';
+
+/**
+ * Options for starting a sandbox
+ */
+export interface SandboxStartOptions {
+  /** Execution mode: workflow (default) or manual */
+  mode?: SandboxMode;
+  /** Session ID for manual mode resumption */
+  sessionId?: string;
+  /** Initial prompt to send when starting manual mode */
+  initialPrompt?: string;
+}
+
 export abstract class Sandbox {
   abstract backend: string;
 
   processManager?: ProcessManager;
   task: TaskDescriptionManager;
+  protected startOptions?: SandboxStartOptions;
 
   constructor(task: TaskDescriptionManager, processManager?: ProcessManager) {
     this.task = task;
     this.processManager = processManager;
+  }
+
+  /**
+   * Get the current sandbox mode
+   */
+  get mode(): SandboxMode {
+    return this.startOptions?.mode ?? 'workflow';
   }
 
   abstract isBackendAvailable(): Promise<boolean>;
@@ -30,13 +57,18 @@ export abstract class Sandbox {
   protected abstract followLogs(): AsyncIterable<string>;
 
   protected get sandboxName(): string {
-    return `rover-task-${this.task.id}-${this.task.iterations}`;
+    const modePrefix = this.mode === 'manual' ? 'manual' : 'task';
+    return `rover-${modePrefix}-${this.task.id}-${this.task.iterations}`;
   }
 
-  async createAndStart(): Promise<string> {
+  async createAndStart(options?: SandboxStartOptions): Promise<string> {
+    // Store options for use in create()
+    this.startOptions = options;
+
+    const modeLabel = this.mode === 'manual' ? 'Manual Mode' : 'Workflow Mode';
     let sandboxId = '';
     this.processManager?.addItem(
-      `Prepare sandbox (${this.backend}) | Name: ${this.sandboxName}`
+      `Prepare sandbox (${this.backend} - ${modeLabel}) | Name: ${this.sandboxName}`
     );
     try {
       sandboxId = await this.create();

@@ -149,3 +149,5 @@ demos/*
 !demos/*.tape
 !demos/README.md
 !demos/run.sh
+
+docs/dev
